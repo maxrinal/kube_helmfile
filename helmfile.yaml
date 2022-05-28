@@ -14,7 +14,6 @@
 
 
 # helm search repo ingress-nginx -l
-# helm show values ingress-nginx/ingress-nginx --version 4.0.19 > /tmp/ingress_nginx_default_4_0_19.yaml
 # helm show values ingress-nginx/ingress-nginx --version 4.1.1  > /tmp/ingress_nginx_default_4_1_1.yaml
 
 
@@ -75,7 +74,7 @@ releases:
         compute-full-forwarded-for: "true"
         enable-real-ip: true
         proxy-add-original-uri-header: true
-        # Dont use this(use-proxy-protocol), it breaks everything
+        # Use with caution, only valid for layer4 load balancer
         # use-proxy-protocol: "true"
       service:
         # Al agregar local impedimos que se realicen consultas intra cluster y podemos mantener la ip cliente
