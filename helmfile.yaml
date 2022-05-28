@@ -1,0 +1,149 @@
+# repositories:
+# - name: bitnami
+#   url: https://charts.bitnami.com/bitnami
+# - name: ingress-nginx 
+#   url: https://kubernetes.github.io/ingress-nginx
+# - name: puckpuck      
+#   url: https://puckpuck.github.io/helm-charts
+
+
+
+
+# helm search repo metallb -l
+# helm show values bitnami/metallb --version 3.0.0 > /tmp/metallb_default.yaml
+
+
+# helm search repo ingress-nginx -l
+# helm show values ingress-nginx/ingress-nginx --version 4.0.19 > /tmp/ingress_nginx_default_4_0_19.yaml
+# helm show values ingress-nginx/ingress-nginx --version 4.1.1  > /tmp/ingress_nginx_default_4_1_1.yaml
+
+
+# helm search repo puckpuck/powerdns -l
+# helm show values puckpuck/powerdns --version 1.1.1 > /tmp/power_dns_default.yaml
+
+# helm search repo bitnami/external-dns -l
+# helm show values bitnami/external-dns --version 6.2.7 > /tmp/external_dns_default.yaml
+
+
+releases:
+- name: metallb
+  namespace: ns-metallb
+  chart: bitnami/metallb
+  version: 3.0.0
+  values:
+  - configInline:
+      # The address-pools section lists the IP addresses that MetalLB is
+      # allowed to allocate, along with settings for how to advertise
+      # those addresses over BGP once assigned. You can have as many
+      # address pools as you want.
+      address-pools:
+      - # A name for the address pool. Services can request allocation
+        # from a specific address pool using this name, by listing this
+        # name under the 'metallb.universe.tf/address-pool' annotation.
+        name: generic-cluster-pool
+        # Protocol can be used to select how the announcement is done.
+        # Supported values are bgp and layer2.
+        protocol: layer2
+        # A list of IP address ranges over which MetalLB has
+        # authority. You can list multiple ranges in a single pool, they
+        # will all share the same settings. Each range can be either a
+        # CIDR prefix, or an explicit start-end range of IPs.
+        addresses:
+        - 192.168.122.10-192.168.122.20
+
+
+- name: nginx-lb
+  namespace: ns-nginx-lb
+  chart: ingress-nginx/ingress-nginx
+  # version: 4.0.19
+  version: 4.1.1
+  set: 
+  - name: controller.ingressClass
+    value: "nginx-lb"
+  - name: controller.containerName
+    value: "controller-nginx-lb"
+  - name: controller.ingressClassResource.name
+    value: "nginx-lb"
+  - name: controller.ingressClassResource.controllerValue
+    value: "k8s.io/ingress-nginx-lb"
+
+  values:
+  - controller:
+      kind: DaemonSet
+      config:
+        use-forwarded-headers: "true"
+        compute-full-forwarded-for: "true"
+        enable-real-ip: true
+        proxy-add-original-uri-header: true
+        # Dont use this(use-proxy-protocol), it breaks everything
+        # use-proxy-protocol: "true"
+      service:
+        # Al agregar local impedimos que se realicen consultas intra cluster y podemos mantener la ip cliente
+        externalTrafficPolicy: "Local"
+        # Se puede forzar una ip si asi se desea
+        loadBalancerIP: 192.168.122.10
+        type: LoadBalancer
+      metrics:
+        port: 10254
+        # if this port is changed, change healthz-port: in extraArgs: accordingly
+        enabled: true
+        serviceMonitor:
+          enabled: false
+        # prometheusRule:
+        #   enabled: true
+
+- name: powerdns
+  namespace: ns-pdns
+  chart: puckpuck/powerdns
+  version: 1.1.1
+  # set: 
+  # - name: "key_name"
+  #   value: "key_value"
+
+  values:
+  - powerdns:
+      initDomains:
+        - k8s.example.test
+        - k9s.example.test
+  - service:
+      type: LoadBalancer
+      # force ip address
+      ip: 192.168.122.11
+      annotations:
+        metallb.universe.tf/allow-shared-ip: powerdns
+        # metallb.universe.tf/loadBalancerIPs: 192.168.122.11
+        # metallb.universe.tf/loadBalancerIPs: 192.168.6.99,192.168.6.100
+
+
+
+
+#  --namespace  --create-namespace   \
+- name: external-pdns
+  namespace: ns-external-dns
+  chart: bitnami/external-dns
+  version: 6.2.7
+  # set: 
+  # - name: logLevel 
+  #   value: debug
+
+  values:
+  - domainFilters:
+    - k8s.example.test
+  - annotationFilter: externaldns=pdns
+  - interval: 30s
+  - logFormat: text
+  - logLevel: debug
+  - policy: sync
+  - registry: txt
+  - txtPrefix: mk-app-
+  - sources:
+    - ingress
+  - provider: pdns
+  - metrics:
+      enabled: true
+  - pdns:
+      apiKey: PowerDNSAPI
+      apiUrl: http://powerdns-api.ns-pdns.svc.cluster.local
+      apiport: 8081
+
+
