@@ -24,6 +24,7 @@ Instalamos minikube
 curl -LO https://github.com/kubernetes/minikube/releases/download/v1.25.2/minikube-linux-amd64.tar.gz
 tar xzvf minikube-linux-amd64.tar.gz
 sudo install out/minikube-linux-amd64 /usr/local/bin/minikube
+sudo install out/docker-machine-driver-kvm2 /usr/local/bin/docker-machine
 ```
 
 Creamos un cluster de minikube
@@ -54,13 +55,36 @@ helm create /tmp/testm
 
 cat <<EOT | helm upgrade --install --namespace ns-test --create-namespace pepe /tmp/testm -f -
 image:
-  repository: ealen/echo-server                               
-  tag: "latest"                                               
+  repository: ealen/echo-server
+  tag: "latest"
+ingress:
+  enabled: true
+  className: "nginx-lb"
+  annotations:
+    externaldns: pdns
+  hosts:
+    - host: lbregtls.k8s.example.test
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls:
+   - secretName: tls-k8sexample
+     hosts:
+       - lbregtls.k8s.example.test
+EOT
+
+
+cat <<EOT | helm upgrade --install --namespace ns-test --create-namespace pepe2 /tmp/testm -f -
+image:
+  repository: nginx
+  tag: alpine                                           
 ingress:
   enabled: true
   className: "nginx-lb"
   annotations: 
     externaldns: pdns
+    nginx.ingress.kubernetes.io/canary: "true"         # Enable canary.
+    nginx.ingress.kubernetes.io/canary-weight: "50"    # Forward 20% of the traffic to the canary ingress.
   hosts:
     - host: lbregtls.k8s.example.test
       paths:
@@ -71,6 +95,7 @@ ingress:
      hosts:
        - lbregtls.k8s.example.test
 EOT
+
 
 # Creamos tls secret referenciando a un crt autofirmado
 # kubectl create secret tls tls-k8sexample --dry-run=client --cert=signed_cert/k8s.example.test/20230507.pem --key=signed_cert/k8s.example.test/20230507.key
@@ -104,9 +129,25 @@ LINE_TO_ADD_ESCAPED=$(echo $LINE_TO_ADD | sed 's/\//\\\//g' )
 grep -q ${PATTERN_TO_SEARCH}  ${LIBVIRT_DNSMASQ_FILE} || echo "${LINE_TO_ADD}" | sudo tee -a  ${LIBVIRT_DNSMASQ_FILE}
 sudo sed -i  "s/${PATTERN_TO_SEARCH}/${LINE_TO_ADD_ESCAPED}/g" ${LIBVIRT_DNSMASQ_FILE}
 
+cat <<EOT | tee /etc/NetworkManager/conf.d/localdns.conf
+[main]
+dns=dnsmasq
+EOT
+
+# (resolv.conf -> ../run/systemd/resolve/stub-resolv.conf)
+# mv /etc/resolv.conf /etc/resolv.conf.original_symlink
+
+# Disabled systemd-resvoled
+# https://medium.com/infraspeak/stop-messing-with-the-hosts-file-a760aa660c20
+# https://trytonvanmeer.dev/posts/networkmanager-dnsmasq-libvirtd/
+# https://kifarunix.com/configure-local-dns-server-using-dnsmasq-on-ubuntu-20-04/
+
+
+
 # Recargamos dnsmasq
-sudo systemctl reload NetworkManager.service
-``` 
+# sudo systemctl reload NetworkManager.service
+sudo systemctl restart NetworkManager.service
+```
 
 Validamos que luego de agregar la zona a dnsmasq podemos resolver directamente
 ```bash
@@ -133,10 +174,10 @@ docker run -d -p 4000:5000 \
     --restart always \
     --name registry-docker.io registry:2
 
-# Validacion de logs 
+# Validacion de logs
 docker logs -f registry-docker.io
 
 # Validacion de cache de imagenes descargadas
 
-curl localhost:4000/v2/_catalog | jq 
+curl localhost:4000/v2/_catalog | jq
 ```
